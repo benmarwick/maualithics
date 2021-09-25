@@ -1,0 +1,357 @@
+---
+title: "Late Pleistocene flaked artefact morphometry and technology at Mau A, northern Vietnam"
+author: 
+  - "Quinn Habedank"
+  - "Ben Marwick"
+date: "5/9/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# first, import the transposed csv table
+library(tidyverse)
+
+ma_flakes_tr <- read_csv("data/ma_flakes_tr.csv")
+#taking cues from https://cran.r-project.org/web/packages/Ckmeans.1d.dp/vignettes/Ckmeans.1d.dp.html
+
+# metric dimensions only 
+ma_flakes_tr_metrics <- 
+ma_flakes_tr %>% 
+  dplyr::select(
+   `Length (mm)` = percussion_length,   
+   `Width (mm)` = width_at_0.50_length,                       
+   `Platform width (mm)` = platform_width ,        
+   `Platform thickness (mm)` =platform_thickness ,                         
+   `Dorsal cortex (%)` = dorsal_cortex_perc,  
+   `Dorsal scar (n)` = dorsal_scar_surface_count ) %>% 
+  pivot_longer(everything(),
+               names_to = "variable",
+               values_to = "value") 
+  
+ggplot(ma_flakes_tr_metrics) +
+  aes(value) +
+  geom_histogram() +
+  facet_wrap( ~ variable, 
+              scales = "free", nrow = 1) +
+  xlab("") +
+  ylab("") +
+  theme_minimal(base_size = 16) +
+  theme(panel.background = element_rect(fill='white',
+                                        colour = "white"),
+        plot.background = element_rect(fill='white',
+                                        colour = "white"))
+
+ggsave(here::here("figures/basic-flake-metrics-plot.png"), 
+       h = 5, w = 20)
+
+
+# techno attributes only 
+ma_flakes_tr_techno <- 
+ma_flakes_tr %>% 
+  dplyr::select(
+    Completeness= completeness,   
+   `Platform type` = platform_type ,        
+    Termination = termination  ) %>% 
+  pivot_longer(everything(),
+               names_to = "variable",
+               values_to = "value")  %>% 
+    filter(!is.na(value)) %>%
+  nest(-variable) %>% 
+  mutate(tallies = 
+  purrr::map(data,  ~.x %>% 
+        group_by(value) %>% 
+        tally()
+      )) 
+
+ma_flakes_tr_techno_techno_nested_tallies_plot_list <- 
+map2(ma_flakes_tr_techno$tallies,
+     ma_flakes_tr_techno$variable,
+    ~ggplot(.x) +
+      aes(value, n) +
+      geom_col() +
+      xlab("") +
+      ylab("") +
+      theme_minimal(base_size = 16) +
+      theme(panel.background = element_rect(fill='white',
+                                        colour = "white"),
+        plot.background = element_rect(fill='white',
+                                        colour = "white")) +
+      ggtitle(.y) )
+
+library(cowplot)
+plot_grid(plotlist = ma_flakes_tr_techno_techno_nested_tallies_plot_list,
+          nrow = 1
+         )
+
+ggsave(here::here("figures/basic-flake-techno-plot.png"), 
+       h = 5, w = 20)
+```
+
+
+```{r}
+library(Ckmeans.1d.dp)
+
+test_result_dorsal_cortex <- Ckmeans.1d.dp(ma_flakes_tr$dorsal_cortex_perc)
+
+plot(test_result_dorsal_cortex)
+
+# It seems that there is no clear clustering in the Dorsal Cortex values. I will have to use values from the literature to divide the cortex values
+
+# try mass:
+test_result_mass <- Ckmeans.1d.dp(ma_flakes_tr$mass)
+
+plot(test_result_mass)
+# we got six clusters
+```
+
+```{r}
+
+# this block of code below shows one way to discretize cortex percentage
+# into three groups.  Below are cutoffs from https://www.jstor.org/stable/23273168
+
+# also add the mass groups
+
+ma_flakes_tr_with_groups <-
+  ma_flakes_tr %>%
+  mutate(dorsal_cortext_group = as.factor(
+           case_when(
+             between(dorsal_cortex_perc, 0, 0) ~ "Tertiary",
+             between(dorsal_cortex_perc, 1, 50) ~ "Secondary",
+             between(dorsal_cortex_perc, 51, 100) ~ "Primary"
+           ))) %>% 
+ mutate(mass_group = as.factor(test_result_mass$cluster))
+
+# plot mass groups
+
+ggplot(ma_flakes_tr_with_groups)  +
+  aes(mass,
+      fill = mass_group) +
+  geom_histogram() +
+  scale_fill_viridis_d(name = "Mass\ncluster") +
+  xlab("Mass (g)") +
+  theme_minimal(base_size = 14) +
+  theme(panel.background = element_rect(fill='white',
+                                        colour = "white"),
+        plot.background = element_rect(fill='white',
+                                       colour = "white"))
+
+ggsave(here::here("figures/mass-cluster-plot.png"),
+       h = 3, w = 10)
+
+```
+
+
+```{r}
+# Code largely from Dr. Ben Marwick
+# here we import the TPS file of landmarks and do geometric morphometry
+# https://www-nature-com.offcampus.lib.washington.edu/articles/s41596-020-0347-z
+
+library(geomorph)
+library(Morpho)
+library(mclust)
+library(cluster)
+library(factoextra)
+
+lands <- readland.tps(
+  here::here("data/landmarks.tps"),
+  specID = "ID")
+
+lands.names <- dimnames(lands)[[3]]
+
+sup.geo <- gpagen(lands,  ProcD=F, Proj = T)
+
+#plot(sup.geo$coord[,1,], sup.geo$coord[,2,], Type="n",
+    # xlim = c(-0.6,0.6), ylim = c(-0.6,0.6),
+   #  asp = 1, main = "geomorph / bending energy")
+
+# Principal component analysis (PCA) using a base R function
+pca.geo <- prcomp(two.d.array(sup.geo$coord))
+
+```
+
+
+```{r}
+
+# Excavation unit PCA
+# ggplot2-based plot of the PCA results using a factoextra function
+fviz_pca_ind(pca.geo,
+             geom.ind = "point", # show points without labels
+            #  line below sets the grouping column for colouring the points
+             habillage = as.factor(ma_flakes_tr_with_groups$Unit),
+             palette = viridis::cividis(13), # color palette, adjust to preferences
+             addEllipses = T, #adds ellipses or convex hulls
+             ellipse.type = "convex", #convex hulls
+             mean.point = F, #don’t show average point
+             legend.title = "Excavation\nunit",
+             title = "Change over time in flake shape") +  #adjust accordingly)
+             coord_fixed(ratio = 1)  + #adjustable for variation-weighted plots
+             theme(panel.background = element_rect(fill='white',
+                                        colour = "white"),
+              plot.background = element_rect(fill='white',
+                                       colour = "white")) 
+
+ggsave(here::here("figures/pca-flake-ex-unit-plot.png"),
+       h = 5, w = 7)
+
+# Mass PCA
+# ggplot2-based plot of the PCA results using a factoextra function
+fviz_pca_ind(pca.geo,
+             geom.ind = "point", # show points without labels
+            #  line below sets the grouping column for colouring the points
+             habillage = ma_flakes_tr_with_groups$mass_group,
+             palette = viridis::viridis(6), #color palette, adjust to preferences
+             addEllipses = T, #adds ellipses or convex hulls
+             ellipse.type = "convex", #convex hulls
+             mean.point = F, #don’t show average point
+             legend.title = "Mass\ncluster",  #adjust accordingly
+            title = "Flake mass and flake shape") + 
+             coord_fixed(ratio = 1) + #adjustable for variation-weighted plots
+             theme(panel.background = element_rect(fill='white',
+                                        colour = "white"),
+              plot.background = element_rect(fill='white',
+                                       colour = "white")) 
+
+ggsave(here::here("figures/pca-flake-mass-plot.png"),
+       h = 5, w = 7)
+
+# Dorsal cortext PCA
+# ggplot2-based plot of the PCA results using a factoextra function
+fviz_pca_ind(pca.geo,
+             geom.ind = "point", # show points without labels
+            #  line below sets the grouping column for colouring the points
+             habillage = ma_flakes_tr_with_groups$dorsal_cortext_group,
+             palette = "npg", #color palette, adjust to preferences
+             addEllipses = T, #adds ellipses or convex hulls
+             ellipse.type = "convex", #convex hulls
+             mean.point = F, # don’t show average point
+             legend.title = "Cortex\nclass",
+             title = "Cortex class and flake shape") +  #adjust accordingly)
+             coord_fixed(ratio = 1) + #adjustable for variation-weighted plots
+             theme(panel.background = element_rect(fill='white',
+                                        colour = "white"),
+              plot.background = element_rect(fill='white',
+                                       colour = "white"))
+
+ggsave(here::here("figures/pca-flake-cortex-plot.png"),
+       h = 5, w = 7)
+
+
+
+```
+
+```{r}
+# here we import the TPS file of landmarks and do geometric morphometry
+# https://www-nature-com.offcampus.lib.washington.edu/articles/s41596-020-0347-z
+
+library(tidyverse)
+library(geomorph)
+library(Morpho)
+library(mclust)
+library(cluster)
+library(factoextra)
+
+lands <- readland.tps(
+  here::here("data/landmarks.tps"),
+  specID = "ID")
+
+# drop outliers  identified in the previous script
+outlier_ids <- c(1152,  606, 1147, 1125,  756 ,1023,  457,
+                 813,  415,  877,  677, 1055,  239,  811,  601,  861,
+                  794,  103 , 598 ,1110 , 906 ,  59 ,   4)
+
+lands_no_outliers <- lands[, , -outlier_ids]
+lands_no_outliers_names <- dimnames(lands_no_outliers)[[3]]
+
+sup.geo <- gpagen(lands_no_outliers,  ProcD=F, Proj = T)
+
+# Principal component analysis (PCA) using a base R function
+pca.geo <- prcomp(two.d.array(sup.geo$coord))
+
+# TODO: find a meaningful way to break this up into groups
+# pass these groups onto the PCA for drawing ellipses
+
+# this block of code below shows one way to discretize cortex percentage
+# into three groups. We need to explore other cutoffs, and other grouping
+# variables besides dorsal cortex. This code below is a good template for
+# starting these explorations
+#ma_flakes_tr_with_groups <-
+#  ma_flakes_tr %>%
+#  slice(-outlier_ids) %>%
+#  mutate(dorsal_cortext_group =
+#           case_when(
+#             between(dorsal_cortex_perc, 0, 10) ~ "group 1",
+#             between(dorsal_cortex_perc, 11, 60) ~ "group 2",
+#             between(dorsal_cortex_perc, 61, 100) ~ "group 3"
+#           ))
+
+# ggplot2-based plot of the PCA results using a factoextra function
+#fviz_pca_ind(pca.geo,
+#             geom.ind = "point", # show points without labels
+#            #  line below sets the grouping column for colouring the points
+#             habillage = ma_flakes_tr_with_groups$dorsal_cortext_group,
+#             palette = "npg", #color palette, adjust to preferences
+#             addEllipses = T, #adds ellipses or convex hulls
+#             ellipse.type = "convex", #convex hulls
+#             mean.point = F, #don’t show average point
+#             legend.title = "SP") +  #adjust accordingly)
+#             coord_fixed(ratio = 1) #adjustable for variation-weighted plots
+
+# let's look at all the PCs and how much each original # variable contributes to them
+
+#view how much variation is described by each PC (ordered from PC1 to last PC)
+enframe(100*pca.geo$sdev^2/sum(pca.geo$sdev^2))
+
+#get meaningful PCs
+getMeaningfulPCs(pca.geo$sdev^2, n = length(lands_no_outliers_names))
+
+#estimate contribution (%) of landmarks on PC1
+PC1_contrib <- fviz_contrib(pca.geo, choice = "var", axes = 1)
+# take a look at the plot
+PC1_contrib
+
+LM_contrib_PC1 <- data.frame(LM = rep(NA, nrow(PC1_contrib$data)/2),
+                             PC1_contrib = rep(NA, nrow(PC1_contrib$data)/2))
+for (i in 1:(nrow(PC1_contrib$data)/2)) {
+  LM_contrib_PC1$PC1_contrib[i] <- sum(PC1_contrib$data[(i*2-1):(i*2),]$contrib)
+  LM_contrib_PC1$LM[i] <- as.character(i)
+}
+
+# TODO: decode the x-axis labels on the scree plot so we can describe in
+# terms of actual flake dimension, write some sentences to describe and interpret
+
+# estimate contribution (%) of landmarks on PC2
+PC2_contrib <- fviz_contrib(pca.geo, choice = "var", axes = 2)
+# take a look at the plot
+PC2_contrib
+
+LM_contrib_PC2 <- data.frame(LM = rep(NA, nrow(PC2_contrib$data)/2),
+                             PC2_contrib = rep(NA, nrow(PC2_contrib$data)/2))
+for (i in 1:(nrow(PC2_contrib$data)/2)) {
+  LM_contrib_PC2$PC2_contrib[i] <- sum(PC2_contrib$data[(i*2-1):(i*2),]$contrib)
+  LM_contrib_PC2$LM[i] <- as.character(i)
+}
+
+# examine landmarks with major contribution (%) to PC1 and PC2
+important_LMs_PC1 <- LM_contrib_PC1[LM_contrib_PC1$PC1_contrib > 100/(nrow(PC1_contrib$data)/2),]
+important_LMs_PC1[order(decreasing = T, important_LMs_PC1$PC1_contrib),]
+important_LMs_PC2 <- LM_contrib_PC2[LM_contrib_PC2$PC2_contrib > 100/(nrow(PC2_contrib$data)/2),]
+# here is a table that summarises the most important landmarks in the PCA
+important_LMs_PC2[order(decreasing = T, important_LMs_PC2$PC2_contrib),]
+
+
+```
+
+Quick notes for Friday meeting:
+
+First, on the PCA biplot, it appears that primary flakes (the flakes that have been worked upon the least) have the least variability in terms of shape, with tertiary flakes having the most variability. This would suggest that early on in the flaking process, flakes were largely the same, differentiating the more they are worked upon. 
+
+Second, in regards to the two bar plots depicting the contributions of variables to the two primary dimensions, the variables are expressed in terms of different landmarks on the artefacts, used by the function in the 999 function. The plan is to relate these different points to different attributes, such as length.
+
+After looking at the function in file 999, some interesting patterns emerge. When we look at the percent contributions for the first dimension, the variable corresponding to point 5 is by far the most prominent. Variable 5 is the landmark for the distal tip of an artefact. As such, we can say that the first dimension is largely representative of artefact length.
+By contrast, the most promient variables for the second dimension are 4, 6, 9 and 1. These correspond to the bottom left, bottom right, top right and top left landmarks respectively. As such, I interpet dimension 2 as being largely representative of overall artefact width.
+
+Now, going back to the PCA biplot again, we can see that all of the groupings of artefacts are egg shaped, being shorter along the first dimension and longer along the second dimension. The way I interpret this is that there is far more variation in width when compared to variation in length, with widths perhaps representing a broad scale of tool types, such as narrow blades and wide scrapers and choppers, with length remaining far more constant. 
